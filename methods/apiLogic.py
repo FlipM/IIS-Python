@@ -1,11 +1,12 @@
 import os, sys, time
 import apiConfig as config
 import onnxruntime as ort
-import image, inference
+import image
+import inference
 from fastapi import HTTPException, UploadFile
 
 
-def loadModel():
+def loadModel(exit_on_error=True):
     ort_session = None
     model_path = os.environ.get(config.MODEL_PATH)
     print(f"Loading model from environment variable {config.MODEL_PATH}: {model_path}")
@@ -21,17 +22,21 @@ def loadModel():
             print("Model loaded successfully.")
         except Exception as e:
             print(f"Error loading model: {e}")
-            ort_session = None
+            if exit_on_error:
+                sys.exit(1)
+            raise e
     else:
-        print(f"Model file not found at {model_path}. Stopping initialization.")
-        ort_session = None
-        sys.exit(1) 
+        print(f"Model file not found at {model_path}.")
+        if exit_on_error:
+            print("Stopping initialization.")
+            sys.exit(1)
+        raise FileNotFoundError(f"Model file not found at {model_path}")
     
     return ort_session
 
 def loadLabels():
     
-    labels_path = os.path.join(os.path.dirname(__file__), "classes", "imagenet_classes.txt")
+    labels_path = os.path.join(os.path.dirname(__file__), "..","classes", "imagenet_classes.txt")
     if os.path.exists(labels_path):
         with open(labels_path, "r") as f:
             return [line.strip() for line in f.readlines()]
@@ -39,25 +44,21 @@ def loadLabels():
         print(f"Labels file not found at {labels_path}")
 
 def inferenceEndpoint(file : UploadFile, ort_session, imagenet_labels, pred_num):
-    start_preprocess = time.perf_counter()
+    start_time = time.perf_counter()
     try:
         contents = file.file.read()
         input_data = image.PreprocessImage(contents)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error processing image: {str(e)}")
    
-    end_preprocess = time.perf_counter()
-    preprocess_time_ms = (end_preprocess - start_preprocess) * 1000
 
     try:
-        start_inference = time.perf_counter()
         results = inference.infer(input_data, ort_session, imagenet_labels, pred_num)
-        end_inference = time.perf_counter()
-        inference_time_ms = (end_inference - start_inference) * 1000
+        end_time = time.perf_counter()
+        inference_time_ms = (end_time - start_time) * 1000
         
         return {
             "predictions": results,
-            "preprocess_time_ms": preprocess_time_ms,
             "inference_time_ms": inference_time_ms
         }
     except Exception as e:
